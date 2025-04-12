@@ -17,8 +17,7 @@ This platform allows users to generate, save, and manage different types of cont
   - Advertisement copy
 - **Template System**: Use pre-defined templates to quickly generate specific content formats
 - **Content Management**: Save, retrieve, and organize generated content
-- **Local Storage**: Default configuration uses local file storage
-- **Optional S3 Integration**: Can be configured to use AWS S3 for content storage
+- **AWS Integration**: Deployed on AWS with EC2, API Gateway, and S3 storage
 
 ## Technical Architecture
 
@@ -26,8 +25,9 @@ This platform allows users to generate, save, and manage different types of cont
 
 - RESTful API built with Flask
 - OpenAI API integration for content generation
-- Flexible storage system supporting both local filesystem and S3
+- AWS S3 for content storage
 - Environment-based configuration
+- Deployed on AWS EC2
 
 ### Frontend (React)
 
@@ -35,13 +35,17 @@ This platform allows users to generate, save, and manage different types of cont
 - Tailwind CSS for responsive UI design
 - Clean and intuitive user interface for content generation
 - Content management capabilities
+- Deployed on AWS EC2 or S3 static website hosting
 
-## Storage System
+## AWS Architecture
 
-The application includes a flexible storage system that supports:
+The application is designed to be fully deployable on AWS:
 
-- **Local Storage**: Content is saved in the local filesystem under the `/storage` directory, organized by content type
-- **AWS S3 Storage**: Optional integration with Amazon S3 (disabled by default)
+- **EC2 Instance**: Hosts the backend Flask application
+- **API Gateway**: Manages the API endpoints at `content-api.contentgeneration.com`
+- **S3 Bucket**: `content` bucket for storing generated content
+- **Route 53**: DNS configuration for `contentgeneration.com`
+- **CloudFront** (Optional): Content delivery for the frontend
 
 ## Project Structure
 
@@ -70,7 +74,7 @@ The application includes a flexible storage system that supports:
 ### Backend
 - Flask (Web framework)
 - OpenAI (AI model access)
-- Boto3 (AWS SDK, optional for S3 storage)
+- Boto3 (AWS SDK for S3 storage)
 
 ### Frontend
 - React (UI framework)
@@ -78,13 +82,173 @@ The application includes a flexible storage system that supports:
 - Tailwind CSS (Styling)
 - React Router (Navigation)
 
-## Deployment
+## AWS Migration Guide
 
-The application can run completely locally or with AWS S3 integration for storage. By default, it uses local storage and doesn't require any AWS services to function.
+### 1. AWS Account Configuration
+
+- Create an AWS account if you don't have one
+- Configure IAM roles and permissions
+  - Create a role for EC2 with S3 and API Gateway permissions
+  - Set up IAM user with programmatic access for deployments
+
+### 2. S3 Bucket Setup
+
+- Create S3 bucket named `content` in region `us-east-2`
+- Enable CORS on the bucket to allow API access
+- Configure bucket policy for secure access
+
+```bash
+# AWS CLI command to create the bucket
+aws s3api create-bucket --bucket content --region us-east-2 --create-bucket-configuration LocationConstraint=us-east-2
+```
+
+### 3. Code Changes for S3 Integration
+
+**Backend Code Updates:**
+
+1. Update `backend/models/storage_model.py`:
+   - Change `use_s3=False` to `use_s3=True` in the StorageManager initialization
+   - Update `_get_s3_client()` method to use the following configuration:
+
+```python
+def _get_s3_client(self):
+    """Get an S3 client using the configured credentials."""
+    return boto3.client(
+        's3',
+        region_name='us-east-2',
+        # AWS credentials will be handled by IAM role when deployed to EC2
+    )
+```
+
+2. Update `backend/config/config.py`:
+   - Change S3 bucket configuration to:
+
+```python
+# S3 configuration for production
+S3_BUCKET=os.environ.get("S3_BUCKET", "content"),
+```
+
+3. Update `.env` file with production settings:
+
+```
+OPENAI_API_KEY=your_openai_api_key
+S3_BUCKET=content
+USE_S3=true
+```
+
+**Frontend Code Updates:**
+
+Update `frontend/src/services/api.service.js` to point to the API Gateway endpoint:
+
+```javascript
+// Base URL configuration
+const API_BASE_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://content-api.contentgeneration.com'
+  : '';
+
+// Update axios configuration
+axios.defaults.baseURL = API_BASE_URL;
+```
+
+### 4. API Gateway Setup
+
+- Create a new API in API Gateway named `content-api`
+- Configure routes to match the Flask application endpoints
+- Set up custom domain `content-api.contentgeneration.com`
+- Create a stage for production deployment
+
+### 5. EC2 Deployment
+
+- Launch an EC2 instance with Amazon Linux 2
+- Configure security groups to allow traffic on port 80, 443, and 5000
+- Install dependencies:
+
+```bash
+# Update system
+sudo yum update -y
+
+# Install Python and pip
+sudo yum install python3 python3-pip -y
+
+# Install Node.js and npm
+curl -sL https://rpm.nodesource.com/setup_14.x | sudo bash -
+sudo yum install nodejs -y
+
+# Install Nginx
+sudo amazon-linux-extras install nginx1 -y
+```
+
+- Set up Nginx as a reverse proxy to the Flask application
+
+### 6. Domain Configuration
+
+- Register domain `contentgeneration.com` if not already owned
+- Use Route 53 to configure DNS:
+  - Create A records for `contentgeneration.com` pointing to EC2 or CloudFront
+  - Create CNAME for `content-api.contentgeneration.com` pointing to API Gateway
+
+### 7. Deployment Script
+
+Create a deployment script for the backend:
+
+```bash
+#!/bin/bash
+
+# Deploy backend to EC2
+echo "Deploying backend..."
+cd backend
+pip install -r requirements.txt
+sudo systemctl restart gunicorn
+
+# Configure Nginx
+echo "Configuring Nginx..."
+sudo cp nginx.conf /etc/nginx/conf.d/content-api.conf
+sudo systemctl restart nginx
+
+echo "Deployment completed successfully!"
+```
+
+Create a deployment script for the frontend:
+
+```bash
+#!/bin/bash
+
+# Build and deploy frontend
+echo "Building frontend..."
+cd frontend
+npm install
+npm run build
+
+# Deploy to S3 (optional for static hosting)
+echo "Deploying to S3..."
+aws s3 sync build/ s3://content-frontend
+
+echo "Frontend deployment completed successfully!"
+```
 
 ## Configuration
 
-Configuration is managed via environment variables (`.env` file), including:
-- OpenAI API key
-- Storage settings (local vs S3)
-- Content generation parameters
+Environment variables in `.env` file for AWS deployment:
+
+```
+# OpenAI API
+OPENAI_API_KEY=your_openai_api_key
+
+# AWS Configuration
+AWS_REGION=us-east-2
+S3_BUCKET=content
+USE_S3=true
+
+# Application Settings
+PORT=5000
+NODE_ENV=production
+
+# Security
+SECRET_KEY=your_secret_key
+```
+
+## CI/CD (Optional)
+
+- Set up GitHub Actions or AWS CodePipeline for automated deployments
+- Configure deployment workflows for frontend and backend
+- Implement automated testing before deployment

@@ -1,0 +1,15 @@
+[Unit]
+Description=Gunicorn daemon for AI Content Generation API
+After=network.target
+
+[Service]
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/Ai-Content-Generation/backend
+ExecStart=/home/ec2-user/.local/bin/gunicorn --workers 3 --bind 127.0.0.1:5000 "app:create_app()"
+Restart=on-failure
+Environment="PATH=/home/ec2-user/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/home/ec2-user/Ai-Content-Generation/backend/.env
+
+[Install]
+WantedBy=multi-user.target
